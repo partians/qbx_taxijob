@@ -216,8 +216,6 @@ local function createNpcPickUpLocation()
     })
 end
 
-
-
 local function enumerateEntitiesWithinDistance(entities, isPlayerEntities, coords, maxDistance)
 	local nearbyEntities = {}
 	if coords then
@@ -370,73 +368,63 @@ local function setLocationsBlip()
 end
 
 local function taxiGarage()
-    local registeredMenu = {
-        id = 'garages_depotlist',
-        title = locale('menu.taxi_menu_header'),
-        options = {}
-    }
-    local options = {}
-    for _, v in pairs(config.allowedVehicles) do
-
-        options[#options + 1] = {
-            title = v.label,
-            event = 'qb-taxi:client:TakeVehicle',
-            args = {model = v.model},
-            icon = 'fa-solid fa-taxi'
-        }
+    local spawnPoint = getVehicleSpawnPoint()
+    if not spawnPoint then
+        exports.qbx_core:Notify(locale('info.no_spawn_point'), 'error')
+        return
     end
 
-    registeredMenu['options'] = options
-    lib.registerContext(registeredMenu)
-    lib.showContext('garages_depotlist')
+    local coords = config.cabSpawns[spawnPoint]
+    local canSpawn = isSpawnPointClear(coords, 2.0)
+    if not canSpawn then
+        exports.qbx_core:Notify(locale('info.no_spawn_point'), 'error')
+        return
+    end
+
+    local netId = lib.callback.await('qb-taxi:server:spawnTaxi', false, config.allowedVehicles[1].model, coords)
+    local veh = NetToVeh(netId)
+
+    SetVehicleFuelLevel(veh, 100.0)
+    SetVehicleEngineOn(veh, true, true, false)
+    TaskWarpPedIntoVehicle(cache.ped, veh, -1) -- warp player into driver seat
+    TriggerEvent('vehiclekeys:client:SetOwner', GetVehicleNumberPlateText(veh)) -- give player keys
+    exports.qbx_core:Notify(locale('info.taxi_spawned'), 'success')
+end
+
+
+local function spawnTaxiPed()
+    lib.requestModel(`a_m_m_indian_01`)
+    local pedCoords = vector3(893.77, -182.11, 74.7)
+    local groundZ = 0.0
+    -- get accurate ground Z
+    local success, z = GetGroundZFor_3dCoord(pedCoords.x, pedCoords.y, pedCoords.z, 0.0, false)
+    if success then
+        groundZ = z
+    else
+        groundZ = pedCoords.z
+    end
+
+    taxiPed = CreatePed(4, `a_m_m_indian_01`, pedCoords.x, pedCoords.y, groundZ, 323.57, false, true)
+    SetBlockingOfNonTemporaryEvents(taxiPed, true)
+    SetEntityInvincible(taxiPed, true)
+    FreezeEntityPosition(taxiPed, true)
+    SetPedCanRagdollFromPlayerImpact(taxiPed, false)
+    SetEntityCollision(taxiPed, true, true)
+    
+    exports.ox_target:addLocalEntity(taxiPed, {
+        {
+            type = 'client',
+            event = 'qb-taxijob:client:requestcab',
+            icon = 'fa-solid fa-taxi',
+            label = locale('info.request_taxi_target'),
+            job = 'taxi'
+        }
+    })
 end
 
 local function setupGarageZone()
-    if config.useTarget then
-        lib.requestModel(`a_m_m_indian_01`)
-        taxiPed = CreatePed(3, `a_m_m_indian_01`, 894.93, -179.12, 74.7 - 1.0, 237.09, false, true)
-        SetModelAsNoLongerNeeded(`a_m_m_indian_01`)
-        SetBlockingOfNonTemporaryEvents(taxiPed, true)
-        FreezeEntityPosition(taxiPed, true)
-        SetEntityInvincible(taxiPed, true)
-        exports.ox_target:addLocalEntity(taxiPed, {
-            {
-                type = 'client',
-                event = 'qb-taxijob:client:requestcab',
-                icon = 'fa-solid fa-taxi',
-                label = locale('info.request_taxi_target'),
-                job = 'taxi',
-            }
-        })
-    else
-        local function onEnter()
-            if not cache.vehicle then
-                lib.showTextUI(locale('info.request_taxi'))
-            end
-        end
-
-        local function onExit()
-            lib.hideTextUI()
-        end
-
-        local function inside()
-            if IsControlJustPressed(0, 38) then
-                lib.hideTextUI()
-                taxiGarage()
-                return
-            end
-        end
-
-        garageZone = lib.zones.box({
-            coords = config.locations.garage.coords,
-            size = vec3(1.6, 4.0, 2.8),
-            rotation = 328.5,
-            debug = config.debugPoly,
-            inside = inside,
-            onEnter = onEnter,
-            onExit = onExit
-        })
-    end
+    if QBX.PlayerData.job.name ~= 'taxi' then return end
+    spawnTaxiPed()
 end
 
 local function destroyGarageZone()
@@ -489,8 +477,9 @@ RegisterNetEvent('qb-taxi:client:TakeVehicle', function(data)
         if CanSpawn then
             local netId = lib.callback.await('qb-taxi:server:spawnTaxi', false, data.model, coords)
             local veh = NetToVeh(netId)
-            SetVehicleFuelLevel(veh, 100.0)
+            exports['lc_fuel']:SetFuel(veh, 100.0)
             SetVehicleEngineOn(veh, true, true, false)
+            TriggerEvent('vehiclekeys:client:SetOwner', QBCore.Functions.GetPlate(veh)) -- gives keys
         else
             exports.qbx_core:Notify(locale('info.no_spawn_point'), 'error')
         end
